@@ -1,0 +1,24 @@
+[package]
+name = "odoh-rs"
+version = "0.1.0"
+authors = ["Tanya Verma <tverma@cloudflare.com>"]
+edition = "2018"
+license = "BSD-2-Clause"
+description = "Rust implementation of the Oblivious DNS over HTTPS (ODoH) protocol draft-02"
+repository = "https://github.com/cloudflare/odoh-rs/"
+keywords = ["odoh", "protocols", "dns", "doh", "privacy"]
+categories = ["network-programming", "cryptography"]
+
+[dependencies]
+anyhow = "1"
+bincode2 = "2.0.1"
+hex = "0.4"
+hkdf = "0.9"
+hpke = "0.2.0"
+lazy_static = "1.4"
+rand = "0.7"
+ring = "0.16.14"
+serde = { version = "1.0.115", features = [ "derive" ] }
+serde_json = "1.0.57"
+serde_repr = "0.1"
+tokio = { version = "0.2", features = [ "full" ] }
