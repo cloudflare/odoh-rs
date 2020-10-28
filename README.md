@@ -35,7 +35,7 @@ This example outlines the steps necessary for a successful ODoH query.
 fn generate_key_pair() -> ObliviousDoHKeyPair {
     // random bytes, should be 32 bytes for X25519 keys
     let ikm = rand::thread_rng().gen::<[u8; 32]>();;
-    let (secret_key, public_key) = Kem::derive_keypair(&ikm);
+    let (secret_key, public_key) = derive_keypair_from_seed(&ikm);
     let public_key_bytes = public_key.to_bytes().to_vec();
     let odoh_public_key = ObliviousDoHConfigContents {
         kem_id: 0x0020,  // DHKEM(X25519, HKDF-SHA256)

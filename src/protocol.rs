@@ -204,8 +204,9 @@ impl ObliviousDoHConfigContents {
     }
 }
 
-// `ObliviousDoHKeyPair` supplies relevant encryption/decryption information
-// required by the target resolver to process DNS queries.
+/// `ObliviousDoHKeyPair` supplies relevant encryption/decryption information
+/// required by the target resolver to process DNS queries.
+#[derive(Clone)]
 pub struct ObliviousDoHKeyPair {
     pub private_key: <Kex as KeyExchange>::PrivateKey,
     pub public_key: ObliviousDoHConfigContents,
