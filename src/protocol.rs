@@ -588,7 +588,6 @@ pub async fn create_response_msg(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hex;
     use std::fs::File;
     use std::io::BufReader;
 
