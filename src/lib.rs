@@ -10,7 +10,7 @@ This library is interoperable with [odoh-go].
 `odoh-rs` uses [hpke] as the underlying HPKE implementation. It supports the default Oblivious DoH ciphersuite
 `(KEM: X25519HkdfSha256, KDF: HkdfSha256, AEAD: AesGcm128)`.
 
-It does not provide full crypto agility, but if you want to use another HPKE suite, you can fork the library and make the relevant changes in `key_utils` and `protocol.rs` marked CHANGE THIS.
+It does not provide crypto agility.
 
 [odoh-rs]: https://github.com/cloudflare/odoh-rs/
 [Oblivious DNS over HTTPS (ODoH) protocol draft-02]: https://tools.ietf.org/html/draft-pauly-dprive-oblivious-doh-02
