@@ -1,5 +1,7 @@
 //! API for protocol functionality such as creating and parsing ODoH queries and responses.
 
+use aes_gcm::aead::{generic_array::GenericArray, AeadInPlace, NewAead};
+use aes_gcm::Aes128Gcm;
 use anyhow::{anyhow, Result};
 use bincode2::LengthOption;
 use hkdf::Hkdf;
@@ -11,9 +13,7 @@ use hpke::{
     kex::KeyExchange,
     AeadCtxR, Deserializable, EncappedKey, Kem as KemTrait, OpModeR, OpModeS, Serializable,
 };
-use lazy_static::lazy_static;
 use rand::{rngs::StdRng, SeedableRng};
-use ring::aead::{Aad, Algorithm, LessSafeKey, Nonce, UnboundKey, AES_128_GCM};
 use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 use serde_repr::*;
 use std::convert::{TryFrom, TryInto};
@@ -30,7 +30,6 @@ const RESPONSE_AAD: &[u8] = &[2u8, 0, 0];
 /// ODoH version supported by this library
 pub const ODOH_VERSION: u16 = 0xff02;
 
-/// CHANGE THESE values for supporting other suites
 pub type Kem = X25519HkdfSha256;
 pub type Aead = AesGcm128;
 pub type Kdf = HkdfSha256;
@@ -40,24 +39,10 @@ const KDF_ID: u16 = 0x0001;
 const AEAD_ID: u16 = 0x0001;
 
 /// For the selected KDF: SHA256
-/// CHANGE THIS for different KDF
 const KDF_OUTPUT_SIZE: usize = 32;
-
-lazy_static! {
-    /// CHANGE THIS for different Aead
-    static ref AEAD_ALGORITHM: &'static Algorithm = {
-        &AES_128_GCM
-    };
-    static ref AEAD_KEY_SIZE: usize = {
-        AEAD_ALGORITHM.key_len()
-    };
-    static ref AEAD_NONCE_SIZE: usize = {
-        AEAD_ALGORITHM.nonce_len()
-    };
-    static ref AEAD_TAG_SIZE: usize = {
-        AEAD_ALGORITHM.tag_len()
-    };
-}
+const AEAD_KEY_SIZE: usize = 16;
+const AEAD_NONCE_SIZE: usize = 12;
+const AEAD_TAG_SIZE: usize = 16;
 
 macro_rules! impl_custom_serde {
     ($name:ident) => {
@@ -317,26 +302,21 @@ impl ObliviousDoHMessagePlaintext for ObliviousDoHResponseBody {
     }
 }
 
-/// Derives a key and nonce pair using the odoh secret
-fn derive_secrets(
-    odoh_secret: &[u8],
-    query: &ObliviousDoHQueryBody,
-) -> Result<(LessSafeKey, Nonce)> {
+/// Derives a key and nonce pair using the odoh secret.
+fn derive_secrets(odoh_secret: &[u8], query: &ObliviousDoHQueryBody) -> Result<(Vec<u8>, Vec<u8>)> {
     let key_info = LABEL_KEY.to_vec();
     let nonce_info = LABEL_NONCE.to_vec();
     let query_bytes = query.to_bytes().unwrap();
 
     let h_key = Hkdf::<<Kdf as KdfTrait>::HashImpl>::new(Some(&query_bytes), &odoh_secret);
-    let mut key = vec![0; *AEAD_KEY_SIZE];
+    let mut key = vec![0; AEAD_KEY_SIZE];
     h_key.expand(&key_info, &mut key).unwrap();
 
     let h_nonce = Hkdf::<<Kdf as KdfTrait>::HashImpl>::new(Some(&query_bytes), &odoh_secret);
-    let mut nonce = vec![0; *AEAD_NONCE_SIZE];
+    let mut nonce = vec![0; AEAD_NONCE_SIZE];
     h_nonce.expand(&nonce_info, &mut nonce).unwrap();
-    let answer_key = LessSafeKey::new(UnboundKey::new(&AEAD_ALGORITHM, &key).unwrap());
-    let answer_nonce = Nonce::try_assume_unique_for_key(&nonce).unwrap();
 
-    Ok((answer_key, answer_nonce))
+    Ok((key, nonce))
 }
 
 fn build_query_aad(server_config: &ObliviousDoHConfigContents) -> Vec<u8> {
@@ -393,8 +373,7 @@ async fn decrypt_query_helper(
     query_ciphertext: Vec<u8>,
 ) -> Result<(Vec<u8>, Vec<u8>)> {
     let aad = build_query_aad(server_config);
-    let (ciphertext, tag_bytes) =
-        query_ciphertext.split_at(query_ciphertext.len() - *AEAD_TAG_SIZE);
+    let (ciphertext, tag_bytes) = query_ciphertext.split_at(query_ciphertext.len() - AEAD_TAG_SIZE);
     let mut ciphertext_copy = ciphertext.to_vec();
 
     let tag = AeadTag::<Aead>::from_bytes(tag_bytes).unwrap();
@@ -443,11 +422,13 @@ async fn encrypt_response_helper(
     plaintext_resp_body: &[u8],
     query: &ObliviousDoHQueryBody,
 ) -> Result<Vec<u8>> {
-    let aad = Aad::from(RESPONSE_AAD);
     let (key, nonce) = derive_secrets(odoh_secret, query).unwrap();
+    let cipher = Aes128Gcm::new(GenericArray::from_slice(&key));
     let mut data = plaintext_resp_body.to_owned();
-    key.seal_in_place_append_tag(nonce, aad, &mut data).unwrap();
-    Ok(data.to_vec())
+    cipher
+        .encrypt_in_place(GenericArray::from_slice(&nonce), RESPONSE_AAD, &mut data)
+        .unwrap();
+    Ok(data)
 }
 
 /// Decrypts a response `resp` using the symmetric key derived from query
@@ -458,11 +439,13 @@ fn decrypt_response_helper(
     encrypted_resp_body: &[u8],
     query: &ObliviousDoHQueryBody,
 ) -> Result<Vec<u8>> {
-    let aad = Aad::from(RESPONSE_AAD);
     let (key, nonce) = derive_secrets(odoh_secret, query).unwrap();
+    let cipher = Aes128Gcm::new(GenericArray::from_slice(&key));
     let mut data = encrypted_resp_body.to_owned();
-    let plaintext = key.open_in_place(nonce, aad, &mut data).unwrap();
-    Ok(plaintext.to_vec())
+    cipher
+        .decrypt_in_place(GenericArray::from_slice(&nonce), RESPONSE_AAD, &mut data)
+        .unwrap();
+    Ok(data)
 }
 
 /// Returns the config supported by the library from a buffer containing `odohconfigs`.

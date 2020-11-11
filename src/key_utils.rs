@@ -2,7 +2,6 @@
 
 use hpke::{kem::X25519HkdfSha256, kex::KeyExchange, Kem as KemTrait};
 
-/// CHANGE THIS if switching to different Kem
 pub type Kem = X25519HkdfSha256;
 pub type Kex = <Kem as KemTrait>::Kex;
 
