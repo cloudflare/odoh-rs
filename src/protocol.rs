@@ -28,7 +28,7 @@ const LABEL_SECRET: &[u8] = b"odoh secret";
 const ODOH_SECRET_LEN: usize = 32;
 const RESPONSE_AAD: &[u8] = &[2u8, 0, 0];
 /// ODoH version supported by this library
-pub const ODOH_VERSION: u16 = 0xff02;
+pub const ODOH_VERSION: u16 = 0xff03;
 
 pub type Kem = X25519HkdfSha256;
 pub type Aead = AesGcm128;
@@ -127,7 +127,7 @@ impl ObliviousDoHConfigs {
 /// Contains version and encryption information. Based on the version specified,
 /// the contents can differ.
 ///
-/// For `ODOH_VERSION = 0xff02`, `ObliviousDoHConfig::contents` deserializes into [ObliviousDoHConfigContents](./../struct.ObliviousDoHConfigContents.html).
+/// For `ODOH_VERSION = 0xff03`, `ObliviousDoHConfig::contents` deserializes into [ObliviousDoHConfigContents](./../struct.ObliviousDoHConfigContents.html).
 #[derive(SerdeSerialize, SerdeDeserialize, Clone, Debug)]
 pub struct ObliviousDoHConfig {
     pub version: u16,
@@ -750,11 +750,11 @@ mod tests {
         .to_bytes()
         .unwrap();
         let config1 = ObliviousDoHConfig {
-            version: 0xff02,
+            version: 0xff03,
             contents: config_contents1.clone(),
         };
         let config2 = ObliviousDoHConfig {
-            version: 0xff03,
+            version: 0xff02,
             contents: ObliviousDoHConfigContents {
                 kem_id: 0x0020,
                 kdf_id: 0x3300,
@@ -770,8 +770,8 @@ mod tests {
         .to_bytes()
         .unwrap();
         let expected_configs = vec![
-            0, 55, 255, 3, 0, 15, 0, 32, 51, 0, 68, 86, 0, 7, 1, 32, 4, 5, 7, 8, 9, 255, 2, 0, 13,
-            0, 32, 51, 0, 68, 86, 0, 5, 1, 32, 4, 5, 7, 255, 3, 0, 15, 0, 32, 51, 0, 68, 86, 0, 7,
+            0, 55, 255, 2, 0, 15, 0, 32, 51, 0, 68, 86, 0, 7, 1, 32, 4, 5, 7, 8, 9, 255, 3, 0, 13,
+            0, 32, 51, 0, 68, 86, 0, 5, 1, 32, 4, 5, 7, 255, 2, 0, 15, 0, 32, 51, 0, 68, 86, 0, 7,
             1, 32, 4, 5, 7, 8, 9,
         ];
         assert_eq!(configs, expected_configs);
