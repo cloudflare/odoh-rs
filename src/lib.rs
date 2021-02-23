@@ -1,6 +1,6 @@
 /*!
 
-[odoh-rs] is a library that implements [Oblivious DNS over HTTPS (ODoH) protocol draft-04] in Rust.
+[odoh-rs] is a library that implements [Oblivious DNS over HTTPS (ODoH) protocol draft-05] in Rust.
 
 It can be used to implement an ODoH client or server (target).
 [odoh-client-rs] uses `odoh-rs` to implement its functionality, and is a good source of API usage examples, along with the tests in `odoh-rs`, in particular [test_vectors_for_odoh].
@@ -13,7 +13,7 @@ This library is interoperable with [odoh-go].
 It does not provide crypto agility.
 
 [odoh-rs]: https://github.com/cloudflare/odoh-rs/
-[Oblivious DNS over HTTPS (ODoH) protocol draft-04]: https://tools.ietf.org/html/draft-pauly-dprive-oblivious-doh-04
+[Oblivious DNS over HTTPS (ODoH) protocol draft-05]: https://tools.ietf.org/html/draft-pauly-dprive-oblivious-doh-05
 [odoh-client-rs]: https://github.com/cloudflare/odoh-client-rs/
 [odoh-go]: https://github.com/cloudflare/odoh-go
 [test_vectors_for_odoh]: https://github.com/cloudflare/odoh-rs/src/protocol.rs#L639
