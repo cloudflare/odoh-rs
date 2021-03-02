@@ -13,10 +13,13 @@ use hpke::{
     kex::KeyExchange,
     AeadCtxR, Deserializable, EncappedKey, Kem as KemTrait, OpModeR, OpModeS, Serializable,
 };
-use rand::{rngs::StdRng, SeedableRng};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 use serde_repr::*;
-use std::convert::{TryFrom, TryInto};
+use std::{
+    convert::{TryFrom, TryInto},
+    vec,
+};
 
 /// HTTP header required for sending queries and responses
 pub const ODOH_HTTP_HEADER: &str = "application/oblivious-dns-message";
@@ -24,11 +27,9 @@ const LABEL_QUERY: &[u8] = b"odoh query";
 const LABEL_KEY: &[u8] = b"odoh key";
 const LABEL_NONCE: &[u8] = b"odoh nonce";
 const LABEL_KEY_ID: &[u8] = b"odoh key id";
-const LABEL_SECRET: &[u8] = b"odoh secret";
-const ODOH_SECRET_LEN: usize = 32;
-const RESPONSE_AAD: &[u8] = &[2u8, 0, 0];
+const LABEL_RESPONSE: &[u8] = b"odoh response";
 /// ODoH version supported by this library
-pub const ODOH_VERSION: u16 = 0xff05;
+pub const ODOH_VERSION: u16 = 0xff06;
 
 pub type Kem = X25519HkdfSha256;
 pub type Aead = AesGcm128;
@@ -43,6 +44,8 @@ const KDF_OUTPUT_SIZE: usize = 32;
 const AEAD_KEY_SIZE: usize = 16;
 const AEAD_NONCE_SIZE: usize = 12;
 const AEAD_TAG_SIZE: usize = 16;
+/// This is the maximum of `AEAD_KEY_SIZE` and `AEAD_NONCE_SIZE`
+const RESPONSE_NONCE_SIZE: usize = 16;
 
 macro_rules! impl_custom_serde {
     ($name:ident) => {
@@ -125,7 +128,7 @@ impl ObliviousDoHConfigs {
 /// Contains version and encryption information. Based on the version specified,
 /// the contents can differ.
 ///
-/// For `ODOH_VERSION = 0xff05`, `ObliviousDoHConfig::contents` deserializes into [ObliviousDoHConfigContents](./../struct.ObliviousDoHConfigContents.html).
+/// For `ODOH_VERSION = 0xff06`, `ObliviousDoHConfig::contents` deserializes into [ObliviousDoHConfigContents](./../struct.ObliviousDoHConfigContents.html).
 #[derive(SerdeSerialize, SerdeDeserialize, Clone, Debug)]
 pub struct ObliviousDoHConfig {
     pub version: u16,
@@ -219,28 +222,6 @@ pub struct ObliviousDoHMessage {
 }
 impl_custom_serde!(ObliviousDoHMessage);
 
-impl ObliviousDoHMessage {
-    /// Creates a new `ObliviousDoHMessage` based on the type of message.
-    /// When the key is not specified, which is the case for `ObliviousDoHMessageType::Response`,
-    /// it sets the key id to be an empty vector, otherwise it computes the key ID.
-    pub fn new(
-        msg_type: ObliviousDoHMessageType,
-        key: Option<ObliviousDoHConfigContents>,
-        msg: Vec<u8>,
-    ) -> Result<Self> {
-        let key_id = if let Some(k) = key {
-            k.identifier()?
-        } else {
-            vec![]
-        };
-        Ok(Self {
-            msg_type,
-            key_id,
-            encrypted_msg: msg,
-        })
-    }
-}
-
 /// Interface for raw queries and responses
 pub trait ObliviousDoHMessagePlaintext {
     fn padding(&self) -> &[u8];
@@ -300,24 +281,50 @@ impl ObliviousDoHMessagePlaintext for ObliviousDoHResponseBody {
         &self.padding
     }
 }
+#[derive(SerdeSerialize, SerdeDeserialize, Clone, Debug)]
+pub struct ResponseNonce(Vec<u8>);
+impl_custom_serde!(ResponseNonce);
 
-/// Derives a key and nonce pair using the odoh secret.
-fn derive_secrets(odoh_secret: &[u8], query: &ObliviousDoHQueryBody) -> Result<(Vec<u8>, Vec<u8>)> {
+/// Derives a key and nonce pair using the odoh secret and response_nonce.
+/// If response_nonce is already specified, uses it to generate the key and nonce
+/// Otherwise, response_nonce is generated, and response_nonce is returned with key and nonce
+fn derive_secrets(
+    odoh_secret: &[u8],
+    query: &ObliviousDoHQueryBody,
+    response_nonce: Option<Vec<u8>>,
+) -> Result<(Vec<u8>, Vec<u8>, ResponseNonce)> {
     let key_info = LABEL_KEY.to_vec();
     let nonce_info = LABEL_NONCE.to_vec();
     let query_bytes = query.to_bytes()?;
+    let response_nonce = if let Some(r) = response_nonce {
+        if r.len() != RESPONSE_NONCE_SIZE {
+            return Err(anyhow!(
+                "response_nonce is not equal to max(key, nonce) size"
+            ));
+        }
+        ResponseNonce(r)
+    } else {
+        // this only works for RESPONSE_NONCE_SIZE <= 32
+        // see: https://docs.rs/rand/0.8.3/rand/distributions/struct.Standard.html
+        ResponseNonce(
+            rand::thread_rng()
+                .gen::<[u8; RESPONSE_NONCE_SIZE]>()
+                .to_vec(),
+        )
+    };
+    let salt = [&query_bytes[..], &response_nonce.to_bytes()?[..]].concat();
 
-    let h_key = Hkdf::<<Kdf as KdfTrait>::HashImpl>::new(Some(&query_bytes), &odoh_secret);
+    let h_key = Hkdf::<<Kdf as KdfTrait>::HashImpl>::new(Some(&salt), &odoh_secret);
     let mut key = vec![0; AEAD_KEY_SIZE];
     h_key.expand(&key_info, &mut key).map_err(Error::msg)?;
 
-    let h_nonce = Hkdf::<<Kdf as KdfTrait>::HashImpl>::new(Some(&query_bytes), &odoh_secret);
+    let h_nonce = Hkdf::<<Kdf as KdfTrait>::HashImpl>::new(Some(&salt), &odoh_secret);
     let mut nonce = vec![0; AEAD_NONCE_SIZE];
     h_nonce
         .expand(&nonce_info, &mut nonce)
         .map_err(Error::msg)?;
 
-    Ok((key, nonce))
+    Ok((key, nonce, response_nonce))
 }
 
 fn build_query_aad(server_config: &ObliviousDoHConfigContents) -> Result<Vec<u8>> {
@@ -356,9 +363,9 @@ fn encrypt_query_helper(
         .seal(&mut msg_copy, &query_aad)
         .map_err(Error::msg)
         .context("encryption failed")?;
-    let mut odoh_secret = [0; ODOH_SECRET_LEN];
+    let mut odoh_secret = [0; AEAD_KEY_SIZE];
     client_ctx
-        .export(LABEL_SECRET, &mut odoh_secret)
+        .export(LABEL_RESPONSE, &mut odoh_secret)
         .map_err(Error::msg)?;
 
     let ciphertext = msg_copy.to_vec();
@@ -389,9 +396,9 @@ async fn decrypt_query_helper(
         .map_err(Error::msg)
         .context("invalid ciphertext")?;
 
-    let mut odoh_secret = [0; ODOH_SECRET_LEN];
+    let mut odoh_secret = [0; AEAD_KEY_SIZE];
     server_ctx
-        .export(LABEL_SECRET, &mut odoh_secret)
+        .export(LABEL_RESPONSE, &mut odoh_secret)
         .map_err(Error::msg)?;
 
     let plaintext = ciphertext_copy.to_vec();
@@ -425,20 +432,25 @@ fn setup_query_context(
 }
 
 /// Encrypts a message `msg` using the symmetric key derived from query
+/// An optional `response_nonce` can be specified that will be used to derive the encryption keys
+/// If `response_nonce` is not specified, it will be randomly generated
 /// In practice, this is used to encrypt the response body before sending
 /// to client
 async fn encrypt_response_helper(
     odoh_secret: &[u8],
     plaintext_resp_body: &[u8],
+    response_nonce: Option<Vec<u8>>,
     query: &ObliviousDoHQueryBody,
-) -> Result<Vec<u8>> {
-    let (key, nonce) = derive_secrets(odoh_secret, query)?;
+) -> Result<(Vec<u8>, ResponseNonce)> {
+    let (key, nonce, response_nonce) = derive_secrets(odoh_secret, query, response_nonce)?;
     let cipher = Aes128Gcm::new(GenericArray::from_slice(&key));
     let mut data = plaintext_resp_body.to_owned();
+    let mut aad = response_nonce.to_bytes()?;
+    aad.insert(0, ObliviousDoHMessageType::Response as u8);
     cipher
-        .encrypt_in_place(GenericArray::from_slice(&nonce), RESPONSE_AAD, &mut data)
+        .encrypt_in_place(GenericArray::from_slice(&nonce), &aad, &mut data)
         .map_err(Error::msg)?;
-    Ok(data)
+    Ok((data, response_nonce))
 }
 
 /// Decrypts a response `resp` using the symmetric key derived from query
@@ -446,14 +458,16 @@ async fn encrypt_response_helper(
 /// which is received by the client
 fn decrypt_response_helper(
     odoh_secret: &[u8],
-    encrypted_resp_body: &[u8],
+    resp: ObliviousDoHMessage,
     query: &ObliviousDoHQueryBody,
 ) -> Result<Vec<u8>> {
-    let (key, nonce) = derive_secrets(odoh_secret, query)?;
+    let (key, nonce, response_nonce) = derive_secrets(odoh_secret, query, Some(resp.key_id))?;
     let cipher = Aes128Gcm::new(GenericArray::from_slice(&key));
-    let mut data = encrypted_resp_body.to_owned();
+    let mut data = resp.encrypted_msg;
+    let mut aad = response_nonce.to_bytes()?;
+    aad.insert(0, ObliviousDoHMessageType::Response as u8);
     cipher
-        .decrypt_in_place(GenericArray::from_slice(&nonce), RESPONSE_AAD, &mut data)
+        .decrypt_in_place(GenericArray::from_slice(&nonce), &aad, &mut data)
         .map_err(Error::msg)?;
     Ok(data)
 }
@@ -504,11 +518,7 @@ pub fn parse_received_response(
         return Err(anyhow!("ObliviousDoHMessageType is wrong"));
     }
 
-    if !de_resp.key_id.is_empty() {
-        return Err(anyhow!("KeyID for response is not empty"));
-    }
-
-    let decrypted_msg = decrypt_response_helper(client_secret, &de_resp.encrypted_msg, query)?;
+    let decrypted_msg = decrypt_response_helper(client_secret, de_resp, query)?;
     let response_body = ObliviousDoHResponseBody::from_bytes(&decrypted_msg)?;
     response_body.validate_padding()?;
     Ok(response_body)
@@ -556,10 +566,13 @@ pub async fn parse_received_query(
 ///
 /// `resolver_resp` refers to plain dns response from the resolver,
 /// `server_secret` is the server context secret
+/// An optional `response_nonce` can be specified which will be used to encrypt the response msg
+/// If it is not specified, it will be generated by the function
 pub async fn create_response_msg(
     server_secret: &[u8],
     resolver_resp: &[u8],
     padding_len: Option<usize>,
+    response_nonce: Option<Vec<u8>>,
     query: &ObliviousDoHQueryBody,
 ) -> Result<Vec<u8>> {
     let padding;
@@ -572,9 +585,14 @@ pub async fn create_response_msg(
         padding,
     }
     .to_bytes()?;
-    let encrypted_resp = encrypt_response_helper(server_secret, &response_body, query).await?;
-
-    ObliviousDoHMessage::new(ObliviousDoHMessageType::Response, None, encrypted_resp)?.to_bytes()
+    let (encrypted_resp, response_nonce) =
+        encrypt_response_helper(server_secret, &response_body, response_nonce, query).await?;
+    ObliviousDoHMessage {
+        msg_type: ObliviousDoHMessageType::Response,
+        key_id: response_nonce.0,
+        encrypted_msg: encrypted_resp,
+    }
+    .to_bytes()
 }
 
 #[cfg(test)]
@@ -663,7 +681,7 @@ mod tests {
             dns_msg: vec![1u8, 2, 3, 4, 5, 6],
             padding: vec![],
         };
-        let generated_resp = create_response_msg(&server_secret, &resp.dns_msg, None, &query)
+        let generated_resp = create_response_msg(&server_secret, &resp.dns_msg, None, None, &query)
             .await
             .unwrap();
         let parsed_resp = parse_received_response(&client_secret, &generated_resp, &query).unwrap();
@@ -723,25 +741,35 @@ mod tests {
                 );
 
                 let resolver_resp = hex::decode(t.response).unwrap();
-                let host_generated_response = create_response_msg(
-                    &host_server_secret,
-                    &resolver_resp,
-                    Some(t.response_padding_length),
-                    &query,
-                )
-                .await
-                .unwrap();
+
+                // assert with fixed response nonce
+                let remote_oblivious_response =
+                    ObliviousDoHMessage::from_bytes(&hex::decode(t.oblivious_response).unwrap())
+                        .unwrap();
                 let remote_generated_response = create_response_msg(
                     &remote_server_secret,
                     &resolver_resp,
                     Some(t.response_padding_length),
+                    Some(remote_oblivious_response.key_id.clone()),
                     &query,
                 )
                 .await
                 .unwrap();
-                let remote_oblivious_response = hex::decode(t.oblivious_response).unwrap();
+                assert_eq!(
+                    remote_generated_response,
+                    remote_oblivious_response.to_bytes().unwrap()
+                );
 
-                assert_eq!(remote_generated_response, remote_oblivious_response);
+                // assert without fixing response nonce
+                let host_generated_response = create_response_msg(
+                    &host_server_secret,
+                    &resolver_resp,
+                    Some(t.response_padding_length),
+                    None,
+                    &query,
+                )
+                .await
+                .unwrap();
 
                 let host_parsed_response =
                     parse_received_response(&host_client_secret, &host_generated_response, &query)
@@ -762,7 +790,7 @@ mod tests {
         .to_bytes()
         .unwrap();
         let config1 = ObliviousDoHConfig {
-            version: 0xff05,
+            version: 0xff06,
             contents: config_contents1.clone(),
         };
         let config2 = ObliviousDoHConfig {
@@ -782,7 +810,7 @@ mod tests {
         .to_bytes()
         .unwrap();
         let expected_configs = vec![
-            0, 55, 255, 2, 0, 15, 0, 32, 51, 0, 68, 86, 0, 7, 1, 32, 4, 5, 7, 8, 9, 255, 5, 0, 13,
+            0, 55, 255, 2, 0, 15, 0, 32, 51, 0, 68, 86, 0, 7, 1, 32, 4, 5, 7, 8, 9, 255, 6, 0, 13,
             0, 32, 51, 0, 68, 86, 0, 5, 1, 32, 4, 5, 7, 255, 2, 0, 15, 0, 32, 51, 0, 68, 86, 0, 7,
             1, 32, 4, 5, 7, 8, 9,
         ];
@@ -793,7 +821,7 @@ mod tests {
 
         // Assert `get_supported_config` fails when no supported configs are found
         let config3 = ObliviousDoHConfig {
-            version: 0xff06,
+            version: 0xff07,
             contents: ObliviousDoHConfigContents {
                 kem_id: 0x0021,
                 kdf_id: 0x3300,
