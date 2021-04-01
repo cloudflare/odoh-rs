@@ -1,6 +1,6 @@
 [package]
 name = "odoh-rs"
-version = "0.1.11"
+version = "0.2.0-alpha.1"
 authors = ["Tanya Verma <tverma@cloudflare.com>"]
 edition = "2018"
 license = "BSD-2-Clause"
@@ -10,20 +10,25 @@ keywords = ["odoh", "protocols", "dns", "doh", "privacy"]
 categories = ["network-programming", "cryptography"]
 
 [dependencies]
-aes-gcm = "0.8"
-anyhow = "1"
-bincode2 = "2.0.1"
+aes-gcm = { version = "0.8", features = [ "std" ] }
+bytes = "1.0"
 hkdf = "0.10"
-hpke = "=0.5.0"
-rand = "0.7"
-serde = { version = "1.0", features = [ "derive" ] }
-serde_repr = "0.1"
+hpke = { version = "0.5.1", features = [ "std" ] }
+rand = "0.8"
+thiserror = "1.0"
 
 [dev-dependencies]
+anyhow = "1"
+clap = "3.0.0-beta.2"
 criterion = "0.3"
+domain = "0.5"
+env_logger = "0.8"
 hex = "0.4"
+log = "0.4"
+reqwest = "0.11"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "0.2", features = [ "full" ] }
+tokio = { version = "1", features = [ "full" ] }
 
 [[bench]]
 name = "odoh_bench"
