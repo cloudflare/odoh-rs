@@ -45,7 +45,7 @@ const AEAD_KEY_SIZE: usize = 16;
 const AEAD_NONCE_SIZE: usize = 12;
 const AEAD_TAG_SIZE: usize = 16;
 /// This is the maximum of `AEAD_KEY_SIZE` and `AEAD_NONCE_SIZE`
-const RESPONSE_NONCE_SIZE: usize = 16;
+pub const RESPONSE_NONCE_SIZE: usize = 16;
 
 macro_rules! impl_custom_serde {
     ($name:ident) => {
