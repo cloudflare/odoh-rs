@@ -1,66 +1,61 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use odoh_rs::*;
-use rand::rngs::StdRng;
-use rand::SeedableRng;
+use hpke::Serializable;
+use odoh_rs::key_utils::*;
+use odoh_rs::protocol::*;
 
-pub fn bench_steps(c: &mut Criterion) {
-    // generate all the data for this test
-    let mut rng = StdRng::from_seed([0; 32]);
-    let key_pair = ObliviousDoHKeyPair::new(&mut rng);
+fn generate_key_pair() -> ObliviousDoHKeyPair {
+    let ikm = "871389a8727130974e3eb3ee528d440a871389a8727130974e3eb3ee528d440a";
+    let ikm_bytes = hex::decode(ikm).unwrap();
+    let (secret_key, public_key) = derive_keypair_from_seed(&ikm_bytes);
+    let public_key_bytes = public_key.to_bytes().to_vec();
+    let odoh_public_key = ObliviousDoHConfigContents {
+        kem_id: 0x0020,
+        kdf_id: 0x0001,
+        aead_id: 0x0001,
+        public_key: public_key_bytes,
+    };
+    ObliviousDoHKeyPair {
+        private_key: secret_key,
+        public_key: odoh_public_key,
+    }
+}
 
-    let query = ObliviousDoHMessagePlaintext::new(b"What's the IP of one.one.one.one?", 0);
-    let query_bytes = compose(&query).unwrap().freeze();
+fn generate_query_body() -> ObliviousDoHQueryBody {
+    ObliviousDoHQueryBody::new(
+        &hex::decode("5513010000010000000000000377777706676f6f676c6503636f6d00001c0001").unwrap(),
+        None,
+    )
+}
 
-    let response = ObliviousDoHMessagePlaintext::new(b"The IP is 1.1.1.1", 0);
-    let response_bytes = compose(&response).unwrap().freeze();
-
-    let (query_enc, cli_secret) = encrypt_query(&query, key_pair.public(), &mut rng).unwrap();
-    let query_enc_bytes = compose(&query_enc).unwrap().freeze();
-
-    let (query_dec, srv_secret) = decrypt_query(&query_enc, &key_pair).unwrap();
-    //let query_dec_bytes = compose(&query_dec).unwrap().freeze();
-
-    let nonce = ResponseNonce::default();
-    let response_enc = encrypt_response(&query_dec, &response, srv_secret, nonce).unwrap();
-    let response_enc_bytes = compose(&response_enc).unwrap().freeze();
-
-    c.bench_function("step_encrypt_query", |b| {
-        b.iter(|| {
-            black_box({
-                let query = parse(&mut query_bytes.clone()).unwrap();
-                encrypt_query(&query, key_pair.public(), &mut rng).unwrap();
-            })
-        })
+pub fn bench_parse_query(c: &mut Criterion) {
+    let key_pair = generate_key_pair();
+    let query = generate_query_body();
+    let (oblivious_query, _) = create_query_msg(&key_pair.public_key, &query).unwrap();
+    c.bench_function("parse_received_query", |b| {
+        b.iter(|| black_box(parse_received_query(&key_pair, &oblivious_query)))
     });
+}
 
-    c.bench_function("step_decrypt_query", |b| {
+pub fn bench_parse_response(c: &mut Criterion) {
+    let client_secret = vec![
+        185, 1, 153, 19, 244, 146, 251, 107, 66, 227, 209, 137, 191, 128, 219, 44, 12, 154, 195,
+        137, 220, 77, 86, 149, 207, 128, 202, 85, 85, 182, 171, 215,
+    ];
+    let generated_resp = vec![
+        2, 0, 0, 0, 26, 165, 223, 11, 24, 56, 158, 31, 166, 11, 144, 56, 129, 76, 247, 176, 49,
+        168, 168, 106, 68, 188, 192, 104, 89, 213, 9,
+    ];
+    let query = generate_query_body();
+    c.bench_function("parse_received_response", |b| {
         b.iter(|| {
-            black_box({
-                let query_enc = parse(&mut query_enc_bytes.clone()).unwrap();
-                decrypt_query(&query_enc, &key_pair).unwrap();
-            })
-        })
-    });
-
-    c.bench_function("step_encrypt_response", |b| {
-        b.iter(|| {
-            black_box({
-                let nonce = ResponseNonce::default();
-                let response = parse(&mut response_bytes.clone()).unwrap();
-                encrypt_response(&response, &response, srv_secret, nonce).unwrap();
-            })
-        })
-    });
-
-    c.bench_function("step_decrypt_response", |b| {
-        b.iter(|| {
-            black_box({
-                let response_enc = parse(&mut response_enc_bytes.clone()).unwrap();
-                decrypt_response(&query, &response_enc, cli_secret).unwrap();
-            })
+            black_box(parse_received_response(
+                &client_secret,
+                &generated_resp,
+                &query,
+            ))
         })
     });
 }
 
-criterion_group!(benches, bench_steps,);
+criterion_group!(benches, bench_parse_query, bench_parse_response);
 criterion_main!(benches);
