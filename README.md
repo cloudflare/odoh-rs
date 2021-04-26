@@ -31,50 +31,63 @@ It does not provide full crypto agility.
 This example outlines the steps necessary for a successful ODoH query.
 
 ```rust
-// Use a seed to initialize a RNG. *Note* you should rely on some
-// random source.
-let mut rng = StdRng::from_seed([0; 32]);
+// Server generates a secret key pair
+fn generate_key_pair() -> ObliviousDoHKeyPair {
+    // random bytes, should be 32 bytes for X25519 keys
+    let ikm = rand::thread_rng().gen::<[u8; 32]>();;
+    let (secret_key, public_key) = derive_keypair_from_seed(&ikm);
+    let public_key_bytes = public_key.to_bytes().to_vec();
+    let odoh_public_key = ObliviousDoHConfigContents {
+        kem_id: 0x0020,  // DHKEM(X25519, HKDF-SHA256)
+        kdf_id: 0x0001,  // KDF(SHA-256)
+        aead_id: 0x0001, // AEAD(AES-GCM-128)
+        public_key: public_key_bytes,
+    };
+    ObliviousDoHKeyPair {
+        private_key: secret_key,
+        public_key: odoh_public_key,
+    }
+}
 
-// Generate a key pair on server side.
-let key_pair = ObliviousDoHKeyPair::new(&mut rng);
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Server generates a key pair and creates an `ObliviousDoHConfigs` struct from it
+    // which it will distribute to clients via HTTPS records as outlined in the draft:
+    // https://tools.ietf.org/html/draft-pauly-dprive-oblivious-doh-02#section-5
+    let key_pair = generate_key_pair();
+    let config = ObliviousDoHConfig::new(&key_pair.public_key.clone().to_bytes().unwrap()).unwrap();
+    let odohconfig = ObliviousDoHConfigs {
+        configs: vec![config.clone()],
+    }
+    .to_bytes()
+    .unwrap();
 
-// Create client configs from the key pair. It can be distributed
-// to the clients.
-let public_key = key_pair.public().clone();
-let client_configs: ObliviousDoHConfigs = vec![ObliviousDoHConfig::from(public_key)].into();
-let client_configs_bytes = compose(&client_configs).unwrap().freeze();
+    // Client gets `odohconfig` via an HTTPS record
+    let client_config = get_supported_config(&odohconfig).unwrap();
 
-// ... distributing client_configs_bytes ...
+    // Client creates a query body
+    let query = ObliviousDoHQueryBody::new(&vec![1, 2], Some(2));
 
-// Parse and extract first supported config from client configs on client side.
-let client_configs: ObliviousDoHConfigs = parse(&mut client_configs_bytes.clone()).unwrap();
-let client_config = client_configs.into_iter().next().unwrap();
-let config_contents = client_config.into();
+    // Client creates a query to send to the server
+    let (oblivious_query, client_secret) = create_query_msg(&client_config, &query).unwrap();
 
-// This is a example client request. This library doesn't validate
-// DNS message.
-let query = ObliviousDoHMessagePlaintext::new(b"What's the IP of one.one.one.one?", 0);
+    // Server receives the query and parses it
+    let (parsed_query, server_secret) = parse_received_query(&key_pair, &oblivious_query)
+        .await
+        .unwrap();
 
-// Encrypt the above request. The client_secret returned will be
-// used later to decrypt server's response.
-let (query_enc, cli_secret) = encrypt_query(&query, &config_contents, &mut rng).unwrap();
+    // Server generates a DNS response based on the query
+    let resolver_resp = vec![1, 3, 4];
 
-// ... sending query_enc to the server ...
+    // Server creates an encrypted response msg to send to the client
+    let generated_response = create_response_msg(&server_secret, &resolver_resp, None, &query)
+        .await
+        .unwrap();
 
-// Server decrypt request.
-let (query_dec, srv_secret) = decrypt_query(&query_enc, &key_pair).unwrap();
-assert_eq!(query, query_dec);
+    // Client receives the server's encrypted DNS response and parses it to recover the plaintext DNS response.
+    let parsed_response =
+        parse_received_response(&client_secret, &generated_response, &query).unwrap();
+    Ok(())
+}
 
-// Server could now resolve the decrypted query, and compose a response.
-let response = ObliviousDoHMessagePlaintext::new(b"The IP is 1.1.1.1", 0);
-
-// server encrypt response
-let nonce = ResponseNonce::default();
-let response_enc = encrypt_response(&query_dec, &response, srv_secret, nonce).unwrap();
-
-// ... sending response_enc back to the client ...
-
-// client descrypt response
-let response_dec = decrypt_response(&query, &response_enc, cli_secret).unwrap();
-assert_eq!(response, response_dec);
 ```
