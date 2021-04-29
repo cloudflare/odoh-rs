@@ -285,7 +285,7 @@ pub struct ObliviousDoHConfigContents {
 
 impl ObliviousDoHConfigContents {
     /// Creates a KeyID for an `ObliviousDoHConfigContents` struct
-    fn identifier(&self) -> Result<Vec<u8>> {
+    pub fn identifier(&self) -> Result<Vec<u8>> {
         let buf = compose(self)?;
 
         let key_id_info = LABEL_KEY_ID.to_vec();
@@ -371,6 +371,13 @@ pub struct ObliviousDoHMessage {
     key_id: Bytes,
     // protocol: length prefix
     encrypted_msg: Bytes,
+}
+
+impl ObliviousDoHMessage {
+    /// Returns the key ID contained in this message.
+    pub fn key_id(&self) -> &[u8] {
+        self.key_id.as_ref()
+    }
 }
 
 impl Deserialize for ObliviousDoHMessage {
@@ -460,6 +467,7 @@ impl Serialize for &ObliviousDoHMessagePlaintext {
 
 /// `ObliviousDoHKeyPair` supplies relevant encryption/decryption information
 /// required by the target resolver to process DNS queries.
+#[derive(Clone)]
 pub struct ObliviousDoHKeyPair {
     private_key: <Kex as KeyExchange>::PrivateKey,
     public_key: ObliviousDoHConfigContents,
@@ -480,6 +488,21 @@ impl ObliviousDoHKeyPair {
         Self {
             private_key,
             public_key: contents,
+        }
+    }
+
+    /// Create a key pair from provided parameters.
+    pub fn from_parameters(kem_id: u16, kdf_id: u16, aead_id: u16, ikm: &[u8]) -> Self {
+        // derive keypair from ikm
+        let (private_key, public_key) = Kem::derive_keypair(ikm);
+        Self {
+            private_key,
+            public_key: ObliviousDoHConfigContents {
+                kem_id,
+                kdf_id,
+                aead_id,
+                public_key: public_key.to_bytes().to_vec().into(),
+            },
         }
     }
 
