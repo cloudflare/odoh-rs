@@ -1,13 +1,13 @@
 // A basic client example.
 
 use anyhow::{Context, Result};
-use clap::Clap;
+use clap::{crate_version, Clap};
 use domain::base::{Dname as DnameO, Message, MessageBuilder, ParsedDname, Rtype};
 use domain::rdata::AllRecordData;
 use log::trace;
 use odoh_rs::*;
 use rand::rngs::StdRng;
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 use reqwest::{Client, Url};
 
 type Dname = DnameO<Vec<u8>>;
@@ -15,7 +15,7 @@ type Dname = DnameO<Vec<u8>>;
 const WELL_KNOWN_CONF_PATH: &str = "/.well-known/odohconfigs";
 
 #[derive(Clap, Debug)]
-#[clap(version = "0.6")]
+#[clap(version = crate_version!())]
 struct Opts {
     #[clap(short, long, default_value = "cloudflare.com")]
     domain: Dname,
@@ -59,8 +59,13 @@ async fn main() -> Result<()> {
 
     let mut rng = StdRng::from_entropy();
 
-    trace!("Encrypting DNS message");
-    let query = ObliviousDoHMessagePlaintext::new(&msg, 0);
+    // add a random padding for testing purpose
+    let padding_len = rng.gen_range(0..10);
+    let query = ObliviousDoHMessagePlaintext::new(&msg, padding_len);
+    trace!(
+        "Encrypting DNS message with {} bytes of padding",
+        padding_len
+    );
     let (query_enc, cli_secret) =
         encrypt_query(&query, &config, &mut rng).context("failed to encrypt query")?;
     let query_body = compose(&query_enc)

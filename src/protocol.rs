@@ -434,6 +434,11 @@ impl ObliviousDoHMessagePlaintext {
     pub fn into_msg(self) -> Bytes {
         self.dns_msg
     }
+
+    /// Return the length of padding.
+    pub fn padding_len(&self) -> usize {
+        self.padding.len()
+    }
 }
 
 impl Deserialize for ObliviousDoHMessagePlaintext {
@@ -886,5 +891,14 @@ mod tests {
                 assert_eq!(response_enc_bytes.as_ref(), odoh_response_bytes.as_ref(),);
             }
         }
+    }
+
+    #[test]
+    fn padding() {
+        let query = ObliviousDoHMessagePlaintext::new(&[], 0);
+        assert_eq!(query.padding_len(), 0);
+
+        let query = ObliviousDoHMessagePlaintext::new(&[], 2);
+        assert_eq!(query.padding_len(), 2);
     }
 }
