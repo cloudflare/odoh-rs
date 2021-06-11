@@ -1,13 +1,13 @@
 // A basic client example.
 
 use anyhow::{Context, Result};
-use clap::Clap;
+use clap::{crate_version, Clap};
 use domain::base::{Dname as DnameO, Message, MessageBuilder, ParsedDname, Rtype};
 use domain::rdata::AllRecordData;
-use log::trace;
+use log::{info, trace};
 use odoh_rs::*;
 use rand::rngs::StdRng;
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 use reqwest::{Client, Url};
 
 type Dname = DnameO<Vec<u8>>;
@@ -15,7 +15,7 @@ type Dname = DnameO<Vec<u8>>;
 const WELL_KNOWN_CONF_PATH: &str = "/.well-known/odohconfigs";
 
 #[derive(Clap, Debug)]
-#[clap(version = "0.6")]
+#[clap(version = crate_version!())]
 struct Opts {
     #[clap(short, long, default_value = "cloudflare.com")]
     domain: Dname,
@@ -23,6 +23,8 @@ struct Opts {
     rtype: Rtype,
     #[clap(short, long, default_value = "https://odoh.cloudflare-dns.com")]
     service: Url,
+    #[clap(short, long)]
+    configs: Option<String>,
 }
 
 #[tokio::main]
@@ -30,19 +32,26 @@ async fn main() -> Result<()> {
     env_logger::init();
     let opts: Opts = Opts::parse();
 
-    trace!("Retrieving ODoH configs");
-    let conf_url = opts
-        .service
-        .join(WELL_KNOWN_CONF_PATH)
-        .context("Failed to compose well-known config path")?;
-    let mut body = reqwest::get(conf_url)
-        .await
-        .context("failed to make request for config")?
-        .bytes()
-        .await
-        .context("failed to get body")?;
+    let configs_bytes = if let Some(s) = opts.configs {
+        info!("Use user provided configs");
+        hex::decode(s).context("Invalid hex value of configs")?
+    } else {
+        trace!("Retrieving ODoH configs");
+        let conf_url = opts
+            .service
+            .join(WELL_KNOWN_CONF_PATH)
+            .context("Failed to compose well-known config path")?;
+        let body = reqwest::get(conf_url)
+            .await
+            .context("failed to make request for config")?
+            .bytes()
+            .await
+            .context("failed to get body")?;
+        body.to_vec()
+    };
 
-    let configs: ObliviousDoHConfigs = parse(&mut body).context("invalid configs")?;
+    let configs: ObliviousDoHConfigs =
+        parse(&mut (configs_bytes.as_ref())).context("invalid configs")?;
     let config = configs
         .into_iter()
         .next()
@@ -59,8 +68,13 @@ async fn main() -> Result<()> {
 
     let mut rng = StdRng::from_entropy();
 
-    trace!("Encrypting DNS message");
-    let query = ObliviousDoHMessagePlaintext::new(&msg, 0);
+    // add a random padding for testing purpose
+    let padding_len = rng.gen_range(0..10);
+    let query = ObliviousDoHMessagePlaintext::new(&msg, padding_len);
+    trace!(
+        "Encrypting DNS message with {} bytes of padding",
+        padding_len
+    );
     let (query_enc, cli_secret) =
         encrypt_query(&query, &config, &mut rng).context("failed to encrypt query")?;
     let query_body = compose(&query_enc)
