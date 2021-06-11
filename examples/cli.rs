@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use clap::{crate_version, Clap};
 use domain::base::{Dname as DnameO, Message, MessageBuilder, ParsedDname, Rtype};
 use domain::rdata::AllRecordData;
-use log::trace;
+use log::{info, trace};
 use odoh_rs::*;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -23,6 +23,8 @@ struct Opts {
     rtype: Rtype,
     #[clap(short, long, default_value = "https://odoh.cloudflare-dns.com")]
     service: Url,
+    #[clap(short, long)]
+    configs: Option<String>,
 }
 
 #[tokio::main]
@@ -30,19 +32,26 @@ async fn main() -> Result<()> {
     env_logger::init();
     let opts: Opts = Opts::parse();
 
-    trace!("Retrieving ODoH configs");
-    let conf_url = opts
-        .service
-        .join(WELL_KNOWN_CONF_PATH)
-        .context("Failed to compose well-known config path")?;
-    let mut body = reqwest::get(conf_url)
-        .await
-        .context("failed to make request for config")?
-        .bytes()
-        .await
-        .context("failed to get body")?;
+    let configs_bytes = if let Some(s) = opts.configs {
+        info!("Use user provided configs");
+        hex::decode(s).context("Invalid hex value of configs")?
+    } else {
+        trace!("Retrieving ODoH configs");
+        let conf_url = opts
+            .service
+            .join(WELL_KNOWN_CONF_PATH)
+            .context("Failed to compose well-known config path")?;
+        let body = reqwest::get(conf_url)
+            .await
+            .context("failed to make request for config")?
+            .bytes()
+            .await
+            .context("failed to get body")?;
+        body.to_vec()
+    };
 
-    let configs: ObliviousDoHConfigs = parse(&mut body).context("invalid configs")?;
+    let configs: ObliviousDoHConfigs =
+        parse(&mut (configs_bytes.as_ref())).context("invalid configs")?;
     let config = configs
         .into_iter()
         .next()
