@@ -94,24 +94,6 @@ pub enum Error {
     Internal,
 }
 
-/// This is a wrapper for HpkeError, as the type doesn't support Eq.
-#[derive(Debug, Clone)]
-pub struct HpkeErrorWrapper(HpkeError);
-
-impl std::error::Error for HpkeErrorWrapper {}
-
-impl core::fmt::Display for HpkeErrorWrapper {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-impl PartialEq for HpkeErrorWrapper {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.to_string() == other.0.to_string()
-    }
-}
-impl Eq for HpkeErrorWrapper {}
-
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Serialize to IETF wireformat that is similar to [XDR](https://tools.ietf.org/html/rfc1014)
