@@ -1,7 +1,7 @@
 // A basic client example.
 
 use anyhow::{Context, Result};
-use clap::{crate_version, Clap};
+use clap::Parser;
 use domain::base::{Dname as DnameO, Message, MessageBuilder, ParsedDname, Rtype};
 use domain::rdata::AllRecordData;
 use log::{info, trace};
@@ -14,8 +14,8 @@ type Dname = DnameO<Vec<u8>>;
 
 const WELL_KNOWN_CONF_PATH: &str = "/.well-known/odohconfigs";
 
-#[derive(Clap, Debug)]
-#[clap(version = crate_version!())]
+#[derive(Parser, Debug)]
+#[clap(version)]
 struct Opts {
     #[clap(short, long, default_value = "cloudflare.com")]
     domain: Dname,
