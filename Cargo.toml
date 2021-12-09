@@ -13,13 +13,13 @@ categories = ["network-programming", "cryptography"]
 aes-gcm = { version = "0.8", features = [ "std" ] }
 bytes = "1.0"
 hkdf = "0.10"
-hpke = { version = "0.5.1", features = [ "std" ] }
+hpke = { version = "0.8", features = [ "std", "x25519" ], default-features = false }
 rand = { version = "0.8", features = [ "std_rng" ], default-features = false }
 thiserror = "1.0"
 
 [dev-dependencies]
 anyhow = "1"
-clap = "3.0.0-beta.2"
+clap = { version = "3.0.0-rc.0", features = ["derive"] }
 criterion = "0.3"
 domain = "0.5"
 env_logger = "0.8"

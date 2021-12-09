@@ -7,13 +7,10 @@ use aes_gcm::aead::{AeadInPlace, NewAead};
 use aes_gcm::Aes128Gcm;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use hkdf::Hkdf;
-use hpke::aead::{AeadTag, AesGcm128};
+use hpke::aead::{Aead as AeadTrait, AesGcm128};
 use hpke::kdf::{HkdfSha256, Kdf as KdfTrait};
 use hpke::kem::X25519HkdfSha256;
-use hpke::kex::KeyExchange;
-use hpke::{
-    Deserializable, EncappedKey, HpkeError, Kem as KemTrait, OpModeR, OpModeS, Serializable,
-};
+use hpke::{Deserializable, HpkeError, Kem as KemTrait, OpModeR, OpModeS, Serializable};
 use rand::{CryptoRng, RngCore};
 use std::convert::{TryFrom, TryInto};
 use thiserror::Error as ThisError;
@@ -25,27 +22,24 @@ const LABEL_NONCE: &[u8] = b"odoh nonce";
 const LABEL_KEY_ID: &[u8] = b"odoh key id";
 const LABEL_RESPONSE: &[u8] = b"odoh response";
 
-// Identifier this crate supports.
-const KEM_ID: u16 = 0x0020;
-const KDF_ID: u16 = 0x0001;
-const AEAD_ID: u16 = 0x0001;
+// The fixed HPKE ciphersuite this crate supports, and their associated constants
+type Kem = X25519HkdfSha256;
+type Aead = AesGcm128;
+type Kdf = HkdfSha256;
+const KEM_ID: u16 = Kem::KEM_ID;
+const KDF_ID: u16 = Kdf::KDF_ID;
+const AEAD_ID: u16 = Aead::AEAD_ID;
 
 /// For the selected KDF: SHA256
 const KDF_OUTPUT_SIZE: usize = 32;
 const AEAD_KEY_SIZE: usize = 16;
 const AEAD_NONCE_SIZE: usize = 12;
-const AEAD_TAG_SIZE: usize = 16;
 
 /// This is the maximum of `AEAD_KEY_SIZE` and `AEAD_NONCE_SIZE`
 const RESPONSE_NONCE_SIZE: usize = 16;
 
 /// Length of public key used in config
 const PUBLIC_KEY_SIZE: usize = 32;
-
-type Kem = X25519HkdfSha256;
-type Aead = AesGcm128;
-type Kdf = HkdfSha256;
-type Kex = <Kem as KemTrait>::Kex;
 
 type AeadKey = [u8; AEAD_KEY_SIZE];
 type AeadNonce = [u8; AEAD_NONCE_SIZE];
@@ -87,10 +81,9 @@ pub enum Error {
     #[error("Response nonce is not equal to max(key, nonce) size")]
     InvalidResponseNonceLength,
 
-    // HpkeError doesn't support Eq
     /// Errors from hpke crate.
     #[error(transparent)]
-    Hpke(#[from] HpkeErrorWrapper),
+    Hpke(#[from] HpkeError),
 
     /// Errors from aes-gcm crate.
     #[error(transparent)]
@@ -100,30 +93,6 @@ pub enum Error {
     #[error("Unexpected internal error")]
     Internal,
 }
-
-impl From<HpkeError> for Error {
-    fn from(e: HpkeError) -> Self {
-        Self::Hpke(HpkeErrorWrapper(e))
-    }
-}
-
-/// This is a wrapper for HpkeError, as the type doesn't support Eq.
-#[derive(Debug, Clone)]
-pub struct HpkeErrorWrapper(HpkeError);
-
-impl std::error::Error for HpkeErrorWrapper {}
-
-impl core::fmt::Display for HpkeErrorWrapper {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-impl PartialEq for HpkeErrorWrapper {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.to_string() == other.0.to_string()
-    }
-}
-impl Eq for HpkeErrorWrapper {}
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -316,7 +285,7 @@ impl ObliviousDoHConfigContents {
         let prk = Hkdf::<<Kdf as KdfTrait>::HashImpl>::new(None, &buf);
         let mut key_id = [0; KDF_OUTPUT_SIZE];
         prk.expand(&key_id_info, &mut key_id)
-            .map_err(|_| Error::from(HpkeError::InvalidKdfLength))?;
+            .map_err(|_| Error::from(HpkeError::KdfOutputTooLong))?;
         Ok(key_id.to_vec())
     }
 
@@ -498,7 +467,7 @@ impl Serialize for &ObliviousDoHMessagePlaintext {
 /// required by the target resolver to process DNS queries.
 #[derive(Clone)]
 pub struct ObliviousDoHKeyPair {
-    private_key: <Kex as KeyExchange>::PrivateKey,
+    private_key: <Kem as KemTrait>::PrivateKey,
     public_key: ObliviousDoHConfigContents,
 }
 
@@ -536,7 +505,7 @@ impl ObliviousDoHKeyPair {
     }
 
     /// Return a reference of the private key.
-    pub fn private(&self) -> &<Kex as KeyExchange>::PrivateKey {
+    pub fn private(&self) -> &<Kem as KemTrait>::PrivateKey {
         &self.private_key
     }
 
@@ -553,23 +522,19 @@ pub fn encrypt_query<R: RngCore + CryptoRng>(
     config: &ObliviousDoHConfigContents,
     rng: &mut R,
 ) -> Result<(ObliviousDoHMessage, OdohSecret)> {
-    let server_pk =
-        <Kex as KeyExchange>::PublicKey::from_bytes(&config.public_key).map_err(Error::from)?;
+    let server_pk = <Kem as KemTrait>::PublicKey::from_bytes(&config.public_key)?;
     let (encapped_key, mut send_ctx) =
-        hpke::setup_sender::<Aead, Kdf, Kem, _>(&OpModeS::Base, &server_pk, LABEL_QUERY, rng)
-            .map_err(Error::from)?;
+        hpke::setup_sender::<Aead, Kdf, Kem, _>(&OpModeS::Base, &server_pk, LABEL_QUERY, rng)?;
 
     let key_id = config.identifier()?;
     let aad = build_aad(ObliviousDoHMessageType::Query, &key_id)?;
 
     let mut odoh_secret = OdohSecret::default();
-    send_ctx
-        .export(LABEL_RESPONSE, &mut odoh_secret)
-        .map_err(Error::from)?;
+    send_ctx.export(LABEL_RESPONSE, &mut odoh_secret)?;
 
     let mut buf = compose(query)?;
 
-    let tag = send_ctx.seal(&mut buf, &aad).map_err(Error::from)?;
+    let tag = send_ctx.seal_in_place_detached(&mut buf, &aad)?;
 
     let result = [
         encapped_key.to_bytes().as_slice(),
@@ -608,9 +573,7 @@ pub fn decrypt_response(
 
     let aad = build_aad(ObliviousDoHMessageType::Response, &response.key_id)?;
 
-    cipher
-        .decrypt_in_place(GenericArray::from_slice(&nonce), &aad, &mut data)
-        .map_err(Error::from)?;
+    cipher.decrypt_in_place(GenericArray::from_slice(&nonce), &aad, &mut data)?;
 
     let response_decrypted = parse(&mut Bytes::from(data))?;
     Ok(response_decrypted)
@@ -633,35 +596,24 @@ pub fn decrypt_query(
     }
 
     let server_sk = key_pair.private();
-    let key_size = <Kex as KeyExchange>::PublicKey::size();
+    let key_size = <Kem as KemTrait>::PublicKey::size();
     let (enc, ct) = query.encrypted_msg.split_at(key_size);
 
-    let encapped_key = EncappedKey::<Kex>::from_bytes(enc).map_err(Error::from)?;
+    let encapped_key = <Kem as KemTrait>::EncappedKey::from_bytes(enc)?;
 
     let mut recv_ctx = hpke::setup_receiver::<Aead, Kdf, Kem>(
         &OpModeR::Base,
-        &server_sk,
+        server_sk,
         &encapped_key,
         LABEL_QUERY,
-    )
-    .map_err(Error::from)?;
+    )?;
 
+    // Open the payload
     let aad = build_aad(ObliviousDoHMessageType::Query, &key_id)?;
-
-    let (ciphertext, tag_bytes) = ct.split_at(ct.len() - AEAD_TAG_SIZE);
-    let mut ciphertext_copy = ciphertext.to_vec();
-    let tag = AeadTag::<Aead>::from_bytes(tag_bytes).map_err(Error::from)?;
-
-    recv_ctx
-        .open(&mut ciphertext_copy, &aad, &tag)
-        .map_err(Error::from)?;
+    let plaintext = recv_ctx.open(ct, &aad)?;
 
     let mut odoh_secret = OdohSecret::default();
-    recv_ctx
-        .export(LABEL_RESPONSE, &mut odoh_secret)
-        .map_err(Error::from)?;
-
-    let plaintext = ciphertext_copy;
+    recv_ctx.export(LABEL_RESPONSE, &mut odoh_secret)?;
 
     let query_decrypted = parse(&mut Bytes::from(plaintext))?;
     Ok((query_decrypted, odoh_secret))
@@ -680,9 +632,7 @@ pub fn encrypt_response(
 
     let mut buf = Vec::new();
     response.serialize(&mut buf)?;
-    cipher
-        .encrypt_in_place(GenericArray::from_slice(&nonce), &aad, &mut buf)
-        .map_err(Error::from)?;
+    cipher.encrypt_in_place(GenericArray::from_slice(&nonce), &aad, &mut buf)?;
 
     Ok(ObliviousDoHMessage {
         msg_type: ObliviousDoHMessageType::Response,
@@ -718,13 +668,13 @@ fn derive_secrets(
     let mut key = AeadKey::default();
     h_key
         .expand(LABEL_KEY, &mut key)
-        .map_err(|_| Error::from(HpkeError::InvalidKdfLength))?;
+        .map_err(|_| Error::from(HpkeError::KdfOutputTooLong))?;
 
     let h_nonce = Hkdf::<<Kdf as KdfTrait>::HashImpl>::new(Some(&salt), &odoh_secret);
     let mut nonce = AeadNonce::default();
     h_nonce
         .expand(LABEL_NONCE, &mut nonce)
-        .map_err(|_| Error::from(HpkeError::InvalidKdfLength))?;
+        .map_err(|_| Error::from(HpkeError::KdfOutputTooLong))?;
 
     Ok((key, nonce))
 }
@@ -762,7 +712,7 @@ mod tests {
         assert_eq!(supported[0], c2);
 
         c2.version = 0xff;
-        let supported = ObliviousDoHConfigs::from(vec![c1.clone(), c2.clone()]).supported();
+        let supported = ObliviousDoHConfigs::from(vec![c1, c2]).supported();
         assert!(supported.is_empty());
     }
 
