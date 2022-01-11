@@ -6,8 +6,8 @@ use domain::base::{Dname as DnameO, Message, MessageBuilder, ParsedDname, Rtype}
 use domain::rdata::AllRecordData;
 use log::{info, trace};
 use odoh_rs::*;
+use rand::prelude::*;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
 use reqwest::{Client, Url};
 
 type Dname = DnameO<Vec<u8>>;
