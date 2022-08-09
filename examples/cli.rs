@@ -8,7 +8,7 @@ use log::{info, trace};
 use odoh_rs::*;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use reqwest::{Client, Url};
+use reqwest::{Client, RequestBuilder, Url};
 
 type Dname = DnameO<Vec<u8>>;
 
@@ -17,14 +17,38 @@ const WELL_KNOWN_CONF_PATH: &str = "/.well-known/odohconfigs";
 #[derive(Parser, Debug)]
 #[clap(version)]
 struct Opts {
-    #[clap(short, long, default_value = "cloudflare.com")]
+    #[clap(
+        short,
+        long,
+        help = "Specific query domain",
+        default_value = "cloudflare.com"
+    )]
     domain: Dname,
-    #[clap(name = "type", short, long, default_value = "AAAA")]
+    #[clap(
+        name = "type",
+        short,
+        long,
+        help = "Specific query type",
+        default_value = "AAAA"
+    )]
     rtype: Rtype,
-    #[clap(short, long, default_value = "https://odoh.cloudflare-dns.com")]
+    #[clap(
+        short,
+        long,
+        help = "Target base URL",
+        default_value = "https://odoh.cloudflare-dns.com"
+    )]
     service: Url,
-    #[clap(short, long)]
+    #[clap(short, long, help = "Use user provided config, encoded in hexstring")]
     configs: Option<String>,
+    #[clap(
+        name = "header",
+        long,
+        help = "Extra header to add, in \"key:value\" format, can appear multiple times",
+        long_help = "foo",
+        value_parser
+    )]
+    headers: Vec<String>,
 }
 
 #[tokio::main]
@@ -32,6 +56,7 @@ async fn main() -> Result<()> {
     env_logger::init();
     let opts: Opts = Opts::parse();
 
+    let cli = Client::new();
     let configs_bytes = if let Some(s) = opts.configs {
         info!("Use user provided configs");
         hex::decode(s).context("Invalid hex value of configs")?
@@ -41,7 +66,11 @@ async fn main() -> Result<()> {
             .service
             .join(WELL_KNOWN_CONF_PATH)
             .context("Failed to compose well-known config path")?;
-        let body = reqwest::get(conf_url)
+
+        let mut req_builder = cli.get(conf_url);
+        req_builder = add_headers(req_builder, &opts.headers);
+        let body = req_builder
+            .send()
             .await
             .context("failed to make request for config")?
             .bytes()
@@ -82,11 +111,13 @@ async fn main() -> Result<()> {
         .freeze();
 
     trace!("Exchanging with server");
-    let cli = Client::new();
-    let mut resp_body = cli
+    let mut req_builder = cli
         .post(opts.service.join("/dns-query")?)
         .header("content-type", ODOH_HTTP_HEADER)
-        .header("accept", ODOH_HTTP_HEADER)
+        .header("accept", ODOH_HTTP_HEADER);
+    req_builder = add_headers(req_builder, &opts.headers);
+
+    let mut resp_body = req_builder
         .body(query_body)
         .send()
         .await
@@ -131,4 +162,13 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn add_headers(mut builder: RequestBuilder, headers: &[String]) -> RequestBuilder {
+    for header in headers {
+        if let Some((k, v)) = header.split_once(':') {
+            builder = builder.header(k.trim(), v.trim());
+        }
+    }
+    builder
 }
