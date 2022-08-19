@@ -6,7 +6,7 @@
 [Latest Version]: https://img.shields.io/crates/v/odoh-rs.svg
 [crates.io]: https://crates.io/crates/odoh-rs
 
-[odoh-rs] is a library that implements [Oblivious DNS over HTTPS (ODoH) protocol draft-06] in Rust.
+[odoh-rs] is a library that implements [RFC 9230] Oblivious DNS over HTTPS protocol in Rust.
 
 It can be used to implement an ODoH client or server (target).
 [odoh-client-rs] uses `odoh-rs` to implement its functionality, and is a good source of API usage examples, along with the tests in `odoh-rs`, in particular [test_vectors_for_odoh].
@@ -19,12 +19,11 @@ This library is interoperable with [odoh-go].
 It does not provide full crypto agility.
 
 [odoh-rs]: https://github.com/cloudflare/odoh-rs/
-[Oblivious DNS over HTTPS (ODoH) protocol draft-06]: https://tools.ietf.org/html/draft-pauly-dprive-oblivious-doh-06
+[RFC 9230]: https://datatracker.ietf.org/doc/rfc9230/
 [odoh-client-rs]: https://github.com/cloudflare/odoh-client-rs/
 [odoh-go]: https://github.com/cloudflare/odoh-go
-[test_vectors_for_odoh]: https://github.com/cloudflare/odoh-rs/src/protocol.rs#L639
-[hpke]: https://docs.rs/hpke/0.3.1/hpke/index.html
-[protocol.rs]: https://github.com/cloudflare/odoh-rs/src/protocol.rs
+[test_vectors_for_odoh]: https://github.com/cloudflare/odoh-rs/blob/master/tests/test-vectors.json
+[hpke]: https://github.com/rozbb/rust-hpke
 
 # Example API Usage
 
