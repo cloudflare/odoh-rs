@@ -3,7 +3,7 @@
 #![deny(missing_docs)]
 
 use aes_gcm::aead::generic_array::GenericArray;
-use aes_gcm::aead::{AeadInPlace, NewAead};
+use aes_gcm::aead::{AeadInPlace, KeyInit};
 use aes_gcm::Aes128Gcm;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use hkdf::Hkdf;
@@ -743,12 +743,12 @@ mod tests {
         // to the clients.
         let public_key = key_pair.public().clone();
         let client_configs: ObliviousDoHConfigs = vec![ObliviousDoHConfig::from(public_key)].into();
-        let client_configs_bytes = compose(&client_configs).unwrap().freeze();
+        let mut client_configs_bytes = compose(&client_configs).unwrap().freeze();
 
         // ... distributing client_configs_bytes ...
 
         // Parse and extract first supported config from client configs on client side.
-        let client_configs: ObliviousDoHConfigs = parse(&mut client_configs_bytes.clone()).unwrap();
+        let client_configs: ObliviousDoHConfigs = parse(&mut client_configs_bytes).unwrap();
         let config_contents = client_configs.supported()[0].clone().into();
 
         // This is a example client request. This library doesn't validate
@@ -883,7 +883,7 @@ mod tests {
             parse::<ObliviousDoHMessagePlaintext, _>(&mut query_bytes.freeze()).unwrap_err()
         );
 
-        let mut query = query.clone();
+        let mut query = query;
         query.padding = vec![1, 2].into();
         assert_eq!(Error::InvalidPadding, compose(&query).unwrap_err());
     }
