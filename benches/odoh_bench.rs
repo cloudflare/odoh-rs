@@ -28,7 +28,7 @@ pub fn bench_steps(c: &mut Criterion) {
         b.iter(|| {
             black_box({
                 let query = parse(&mut query_bytes.clone()).unwrap();
-                encrypt_query(&query, key_pair.public(), &mut rng).unwrap();
+                encrypt_query(&query, key_pair.public(), &mut rng).unwrap()
             })
         })
     });
@@ -37,7 +37,7 @@ pub fn bench_steps(c: &mut Criterion) {
         b.iter(|| {
             black_box({
                 let query_enc = parse(&mut query_enc_bytes.clone()).unwrap();
-                decrypt_query(&query_enc, &key_pair).unwrap();
+                decrypt_query(&query_enc, &key_pair).unwrap()
             })
         })
     });
@@ -47,7 +47,7 @@ pub fn bench_steps(c: &mut Criterion) {
             black_box({
                 let nonce = ResponseNonce::default();
                 let response = parse(&mut response_bytes.clone()).unwrap();
-                encrypt_response(&response, &response, srv_secret, nonce).unwrap();
+                encrypt_response(&response, &response, srv_secret, nonce).unwrap()
             })
         })
     });
@@ -56,7 +56,7 @@ pub fn bench_steps(c: &mut Criterion) {
         b.iter(|| {
             black_box({
                 let response_enc = parse(&mut response_enc_bytes.clone()).unwrap();
-                decrypt_response(&query, &response_enc, cli_secret).unwrap();
+                decrypt_response(&query, &response_enc, cli_secret).unwrap()
             })
         })
     });
