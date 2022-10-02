@@ -14,7 +14,7 @@ include = ["/src", "/examples", "README.md", "LICENSE"]
 aes-gcm = { version = "0.10", features = [ "std" ] }
 bytes = "1.0"
 hkdf = "0.12"
-hpke = { version = "0.9", features = [ "std", "x25519" ], default-features = false }
+hpke = { version = "0.10", features = [ "std", "x25519" ], default-features = false }
 rand = { version = "0.8", features = [ "std_rng" ], default-features = false }
 thiserror = "1.0"
 
