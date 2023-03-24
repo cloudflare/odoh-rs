@@ -20,6 +20,7 @@ thiserror = "1.0"
 
 [dev-dependencies]
 anyhow = "1"
+base64 = "0.21.0"
 clap = { version = "3.2", features = ["derive"] }
 criterion = "0.3"
 domain = "0.6"
