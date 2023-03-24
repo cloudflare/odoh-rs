@@ -1,6 +1,7 @@
 // A basic client example.
 
 use anyhow::{Context, Result};
+use base64::{engine::general_purpose, Engine as _};
 use clap::Parser;
 use domain::base::{Dname as DnameO, Message, MessageBuilder, ParsedDname, Rtype};
 use domain::rdata::AllRecordData;
@@ -45,10 +46,16 @@ struct Opts {
         name = "header",
         long,
         help = "Extra header to add, in \"key:value\" format, can appear multiple times",
-        long_help = "foo",
         value_parser
     )]
     headers: Vec<String>,
+    #[clap(
+        name = "step",
+        long,
+        help = "Dump encrypted query and read the encrypted response from user instead",
+        value_parser
+    )]
+    step: bool,
 }
 
 #[tokio::main]
@@ -110,21 +117,32 @@ async fn main() -> Result<()> {
         .context("failed to compose query body")?
         .freeze();
 
-    trace!("Exchanging with server");
-    let mut req_builder = cli
-        .post(opts.service.join("/dns-query")?)
-        .header("content-type", ODOH_HTTP_HEADER)
-        .header("accept", ODOH_HTTP_HEADER);
-    req_builder = add_headers(req_builder, &opts.headers);
+    let mut resp_body = if opts.step {
+        println!(
+            "* Encrypted request in base64: {}\n* Paste the encrypted response in base64 below:",
+            general_purpose::URL_SAFE.encode(&query_body)
+        );
+        let mut buffer = String::new();
+        std::io::stdin().read_line(&mut buffer)?;
+        println!("decoding [{}]", buffer.trim());
+        general_purpose::URL_SAFE.decode(&buffer.trim())?.into()
+    } else {
+        trace!("Exchanging with server");
+        let mut req_builder = cli
+            .post(opts.service.join("/dns-query")?)
+            .header("content-type", ODOH_HTTP_HEADER)
+            .header("accept", ODOH_HTTP_HEADER);
+        req_builder = add_headers(req_builder, &opts.headers);
 
-    let mut resp_body = req_builder
-        .body(query_body)
-        .send()
-        .await
-        .context("failed to query target server")?
-        .bytes()
-        .await
-        .context("failed to get response body")?;
+        req_builder
+            .body(query_body)
+            .send()
+            .await
+            .context("failed to query target server")?
+            .bytes()
+            .await
+            .context("failed to get response body")?
+    };
 
     trace!("Decrypting DNS message");
     let response_enc = parse(&mut resp_body).context("failed to parse response body")?;
