@@ -597,6 +597,9 @@ pub fn decrypt_query(
 
     let server_sk = key_pair.private();
     let key_size = <Kem as KemTrait>::PublicKey::size();
+    if key_size > query.encrypted_msg.len() {
+        return Err(Error::InvalidInputLength);
+    }
     let (enc, ct) = query.encrypted_msg.split_at(key_size);
 
     let encapped_key = <Kem as KemTrait>::EncappedKey::from_bytes(enc)?;
@@ -886,5 +889,22 @@ mod tests {
         let mut query = query;
         query.padding = vec![1, 2].into();
         assert_eq!(Error::InvalidPadding, compose(&query).unwrap_err());
+    }
+
+    #[test]
+    fn parse_encapsulated_key() {
+        // Use a seed to initialize a RNG. *Note* you should rely on some
+        // random source.
+        let mut rng = StdRng::from_seed([0; 32]);
+        let key_pair = ObliviousDoHKeyPair::new(&mut rng);
+
+        // Construct a malformed payload. Parsing the encrypted message should fail because it is
+        // too short to include the encapsulated key.
+        let query_enc = ObliviousDoHMessage {
+            msg_type: ObliviousDoHMessageType::Query,
+            key_id: key_pair.public().identifier().unwrap().to_vec().into(),
+            encrypted_msg: b"too short".to_vec().into(),
+        };
+        assert!(decrypt_query(&query_enc, &key_pair).is_err());
     }
 }
