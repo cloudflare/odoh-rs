@@ -102,10 +102,10 @@ async fn main() -> Result<()> {
         .context("failed to push question")?;
     let msg = msg.finish();
 
-    let mut rng = StdRng::from_entropy();
+    let mut rng = StdRng::from_os_rng();
 
     // add a random padding for testing purpose
-    let padding_len = rng.gen_range(0..10);
+    let padding_len = rng.random_range(0..10);
     let query = ObliviousDoHMessagePlaintext::new(&msg, padding_len);
     trace!(
         "Encrypting DNS message with {} bytes of padding",

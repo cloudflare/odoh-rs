@@ -10,8 +10,8 @@ use hkdf::Hkdf;
 use hpke::aead::{Aead as AeadTrait, AesGcm128};
 use hpke::kdf::{HkdfSha256, Kdf as KdfTrait};
 use hpke::kem::X25519HkdfSha256;
+use hpke::rand_core::{CryptoRng, RngCore};
 use hpke::{Deserializable, HpkeError, Kem as KemTrait, OpModeR, OpModeS, Serializable};
-use rand::{CryptoRng, RngCore};
 use std::convert::{TryFrom, TryInto};
 use thiserror::Error as ThisError;
 
