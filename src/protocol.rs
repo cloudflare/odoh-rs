@@ -27,6 +27,8 @@ const LABEL_RESPONSE: &[u8] = b"odoh response";
 type Kem = X25519HkdfSha256;
 type Aead = AesGcm128;
 type Kdf = HkdfSha256;
+type Hash = Sha256; // The underlying hash used by Kdf
+
 const KEM_ID: u16 = Kem::KEM_ID;
 const KDF_ID: u16 = Kdf::KDF_ID;
 const AEAD_ID: u16 = Aead::AEAD_ID;
@@ -283,7 +285,7 @@ impl ObliviousDoHConfigContents {
         let buf = compose(self)?;
 
         let key_id_info = LABEL_KEY_ID.to_vec();
-        let prk = Hkdf::<Sha256>::new(None, &buf);
+        let prk = Hkdf::<Hash>::new(None, &buf);
         let mut key_id = [0; KDF_OUTPUT_SIZE];
         prk.expand(&key_id_info, &mut key_id)
             .map_err(|_| Error::from(HpkeError::KdfOutputTooLong))?;
@@ -672,13 +674,13 @@ fn derive_secrets(
     ]
     .concat();
 
-    let h_key = Hkdf::<Sha256>::new(Some(&salt), &odoh_secret);
+    let h_key = Hkdf::<Hash>::new(Some(&salt), &odoh_secret);
     let mut key = AeadKey::default();
     h_key
         .expand(LABEL_KEY, &mut key)
         .map_err(|_| Error::from(HpkeError::KdfOutputTooLong))?;
 
-    let h_nonce = Hkdf::<Sha256>::new(Some(&salt), &odoh_secret);
+    let h_nonce = Hkdf::<Hash>::new(Some(&salt), &odoh_secret);
     let mut nonce = AeadNonce::default();
     h_nonce
         .expand(LABEL_NONCE, &mut nonce)
