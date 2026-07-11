@@ -2,16 +2,17 @@
 
 #![deny(missing_docs)]
 
-use aes_gcm::aead::generic_array::GenericArray;
-use aes_gcm::aead::{AeadInPlace, KeyInit};
+use aes_gcm::aead::{AeadInOut, KeyInit};
 use aes_gcm::Aes128Gcm;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use hkdf::Hkdf;
 use hpke::aead::{Aead as AeadTrait, AesGcm128};
+use hpke::inout::InOutBuf;
 use hpke::kdf::{HkdfSha256, Kdf as KdfTrait};
 use hpke::kem::X25519HkdfSha256;
-use hpke::rand_core::{CryptoRng, RngCore};
+use hpke::rand_core::CryptoRng;
 use hpke::{Deserializable, HpkeError, Kem as KemTrait, OpModeR, OpModeS, Serializable};
+use sha2::Sha256;
 use std::convert::{TryFrom, TryInto};
 use thiserror::Error as ThisError;
 
@@ -282,7 +283,7 @@ impl ObliviousDoHConfigContents {
         let buf = compose(self)?;
 
         let key_id_info = LABEL_KEY_ID.to_vec();
-        let prk = Hkdf::<<Kdf as KdfTrait>::HashImpl>::new(None, &buf);
+        let prk = Hkdf::<Sha256>::new(None, &buf);
         let mut key_id = [0; KDF_OUTPUT_SIZE];
         prk.expand(&key_id_info, &mut key_id)
             .map_err(|_| Error::from(HpkeError::KdfOutputTooLong))?;
@@ -473,8 +474,8 @@ pub struct ObliviousDoHKeyPair {
 
 impl ObliviousDoHKeyPair {
     /// Generate a new keypair from given RNG.
-    pub fn new<R: RngCore + CryptoRng>(mut rng: &mut R) -> Self {
-        let (private_key, public_key) = Kem::gen_keypair(&mut rng);
+    pub fn new<R: CryptoRng>(mut rng: &mut R) -> Self {
+        let (private_key, public_key) = Kem::gen_keypair_with_rng(&mut rng);
 
         let contents = ObliviousDoHConfigContents {
             kem_id: KEM_ID,
@@ -517,14 +518,18 @@ impl ObliviousDoHKeyPair {
 
 /// Encrypt a client DNS query with a proper config, return the
 /// encrypted query and client secret.
-pub fn encrypt_query<R: RngCore + CryptoRng>(
+pub fn encrypt_query<R: CryptoRng>(
     query: &ObliviousDoHMessagePlaintext,
     config: &ObliviousDoHConfigContents,
     rng: &mut R,
 ) -> Result<(ObliviousDoHMessage, OdohSecret)> {
     let server_pk = <Kem as KemTrait>::PublicKey::from_bytes(&config.public_key)?;
-    let (encapped_key, mut send_ctx) =
-        hpke::setup_sender::<Aead, Kdf, Kem, _>(&OpModeS::Base, &server_pk, LABEL_QUERY, rng)?;
+    let (encapped_key, mut send_ctx) = hpke::setup_sender_with_rng::<Aead, Kdf, Kem>(
+        &OpModeS::Base,
+        &server_pk,
+        LABEL_QUERY,
+        rng,
+    )?;
 
     let key_id = config.identifier()?;
     let aad = build_aad(ObliviousDoHMessageType::Query, &key_id)?;
@@ -534,7 +539,7 @@ pub fn encrypt_query<R: RngCore + CryptoRng>(
 
     let mut buf = compose(query)?;
 
-    let tag = send_ctx.seal_in_place_detached(&mut buf, &aad)?;
+    let tag = send_ctx.seal_inout_detached(InOutBuf::from(buf.as_mut()), &aad)?;
 
     let result = [
         encapped_key.to_bytes().as_slice(),
@@ -568,12 +573,12 @@ pub fn decrypt_response(
         .try_into()
         .map_err(|_| Error::InvalidResponseNonceLength)?;
     let (key, nonce) = derive_secrets(secret, query, response_nonce)?;
-    let cipher = Aes128Gcm::new(GenericArray::from_slice(&key));
+    let cipher = Aes128Gcm::new(&key.try_into().unwrap());
     let mut data = response.encrypted_msg.to_vec();
 
     let aad = build_aad(ObliviousDoHMessageType::Response, &response.key_id)?;
 
-    cipher.decrypt_in_place(GenericArray::from_slice(&nonce), &aad, &mut data)?;
+    cipher.decrypt_in_place(&nonce.try_into().unwrap(), &aad, &mut data)?;
 
     let response_decrypted = parse(&mut Bytes::from(data))?;
     Ok(response_decrypted)
@@ -630,12 +635,12 @@ pub fn encrypt_response(
     response_nonce: ResponseNonce,
 ) -> Result<ObliviousDoHMessage> {
     let (key, nonce) = derive_secrets(secret, query, response_nonce)?;
-    let cipher = Aes128Gcm::new(GenericArray::from_slice(&key));
+    let cipher = Aes128Gcm::new(&key.try_into().unwrap());
     let aad = build_aad(ObliviousDoHMessageType::Response, &response_nonce)?;
 
     let mut buf = Vec::new();
     response.serialize(&mut buf)?;
-    cipher.encrypt_in_place(GenericArray::from_slice(&nonce), &aad, &mut buf)?;
+    cipher.encrypt_in_place(&nonce.try_into().unwrap(), &aad, &mut buf)?;
 
     Ok(ObliviousDoHMessage {
         msg_type: ObliviousDoHMessageType::Response,
@@ -667,13 +672,13 @@ fn derive_secrets(
     ]
     .concat();
 
-    let h_key = Hkdf::<<Kdf as KdfTrait>::HashImpl>::new(Some(&salt), &odoh_secret);
+    let h_key = Hkdf::<Sha256>::new(Some(&salt), &odoh_secret);
     let mut key = AeadKey::default();
     h_key
         .expand(LABEL_KEY, &mut key)
         .map_err(|_| Error::from(HpkeError::KdfOutputTooLong))?;
 
-    let h_nonce = Hkdf::<<Kdf as KdfTrait>::HashImpl>::new(Some(&salt), &odoh_secret);
+    let h_nonce = Hkdf::<Sha256>::new(Some(&salt), &odoh_secret);
     let mut nonce = AeadNonce::default();
     h_nonce
         .expand(LABEL_NONCE, &mut nonce)
