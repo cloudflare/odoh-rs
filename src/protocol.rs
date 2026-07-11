@@ -7,7 +7,6 @@ use aes_gcm::Aes128Gcm;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use hkdf::Hkdf;
 use hpke::aead::{Aead as AeadTrait, AesGcm128};
-use hpke::inout::InOutBuf;
 use hpke::kdf::{HkdfSha256, Kdf as KdfTrait};
 use hpke::kem::X25519HkdfSha256;
 use hpke::rand_core::CryptoRng;
@@ -541,7 +540,7 @@ pub fn encrypt_query<R: CryptoRng>(
 
     let mut buf = compose(query)?;
 
-    let tag = send_ctx.seal_inout_detached(InOutBuf::from(buf.as_mut()), &aad)?;
+    let tag = send_ctx.seal_inout_detached(buf.as_mut().into(), &aad)?;
 
     let result = [
         encapped_key.to_bytes().as_slice(),
