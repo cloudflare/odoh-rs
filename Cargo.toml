@@ -14,7 +14,7 @@ include = ["/src", "/examples", "README.md", "LICENSE"]
 aes-gcm = { version = "0.11" }
 bytes = "1.0"
 hkdf = "0.13"
-hpke = { version = "0.14", features = [ "getrandom", "alloc", "x25519", "aes" ], default-features = false }
+hpke = { version = "0.14", default-features = false, features = [ "getrandom", "alloc", "x25519", "aes" ], default-features = false }
 sha2 = "0.11"
 thiserror = "1.0"
 
