@@ -574,12 +574,12 @@ pub fn decrypt_response(
         .try_into()
         .map_err(|_| Error::InvalidResponseNonceLength)?;
     let (key, nonce) = derive_secrets(secret, query, response_nonce)?;
-    let cipher = Aes128Gcm::new(&key.try_into().unwrap());
+    let cipher = Aes128Gcm::new(&key.into());
     let mut data = response.encrypted_msg.to_vec();
 
     let aad = build_aad(ObliviousDoHMessageType::Response, &response.key_id)?;
 
-    cipher.decrypt_in_place(&nonce.try_into().unwrap(), &aad, &mut data)?;
+    cipher.decrypt_in_place(&nonce.into(), &aad, &mut data)?;
 
     let response_decrypted = parse(&mut Bytes::from(data))?;
     Ok(response_decrypted)
@@ -636,12 +636,12 @@ pub fn encrypt_response(
     response_nonce: ResponseNonce,
 ) -> Result<ObliviousDoHMessage> {
     let (key, nonce) = derive_secrets(secret, query, response_nonce)?;
-    let cipher = Aes128Gcm::new(&key.try_into().unwrap());
+    let cipher = Aes128Gcm::new(&key.into());
     let aad = build_aad(ObliviousDoHMessageType::Response, &response_nonce)?;
 
     let mut buf = Vec::new();
     response.serialize(&mut buf)?;
-    cipher.encrypt_in_place(&nonce.try_into().unwrap(), &aad, &mut buf)?;
+    cipher.encrypt_in_place(&nonce.into(), &aad, &mut buf)?;
 
     Ok(ObliviousDoHMessage {
         msg_type: ObliviousDoHMessageType::Response,
