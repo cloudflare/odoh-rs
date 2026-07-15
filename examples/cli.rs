@@ -7,8 +7,7 @@ use domain::base::{Dname as DnameO, Message, MessageBuilder, ParsedDname, Rtype}
 use domain::rdata::AllRecordData;
 use log::{info, trace};
 use odoh_rs::*;
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::RngExt;
 use reqwest::{Client, RequestBuilder, Url};
 
 type Dname = DnameO<Vec<u8>>;
@@ -102,7 +101,7 @@ async fn main() -> Result<()> {
         .context("failed to push question")?;
     let msg = msg.finish();
 
-    let mut rng = StdRng::from_os_rng();
+    let mut rng = rand::rng();
 
     // add a random padding for testing purpose
     let padding_len = rng.random_range(0..10);
