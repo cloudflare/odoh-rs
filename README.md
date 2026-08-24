@@ -67,8 +67,9 @@ assert_eq!(query, query_dec);
 // Server could now resolve the decrypted query, and compose a response.
 let response = ObliviousDoHMessagePlaintext::new(b"The IP is 1.1.1.1", 0);
 
-// server encrypt response
-let nonce = ResponseNonce::default();
+// Server encrypt response.
+let mut nonce = ResponseNonce::default();
+rng.fill_bytes(&mut nonce);
 let response_enc = encrypt_response(&query_dec, &response, srv_secret, nonce).unwrap();
 
 // ... sending response_enc back to the client ...
